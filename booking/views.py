@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -6,7 +8,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from django.db.models import Q, Sum, Count
 from datetime import datetime, timedelta
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from .models import Booking
 from .serializers import BookingSerializer
 
@@ -254,30 +256,47 @@ def booking_grouped_by_date(request):
     
     # Get all bookings and group by date
     bookings = bookings_query.order_by('check_in_date')
-    
-    # Group bookings by check_in_date
+
+    # Group bookings by each date (from check_in to check_out)
     grouped_data = {}
     for booking in bookings:
-        date_key = booking.check_in_date.strftime('%Y-%m-%d')
-        
-        if date_key not in grouped_data:
-            grouped_data[date_key] = {
-                'date': date_key,
-                'total_bookings': 0,
-                'total_guests': 0,
-                'total_revenue': 0,
-                'bookings': []
-            }
-        
-        serializer = BookingSerializer(booking)
-        grouped_data[date_key]['bookings'].append(serializer.data)
-        grouped_data[date_key]['total_bookings'] += 1
-        grouped_data[date_key]['total_guests'] += booking.adults + booking.children
-        grouped_data[date_key]['total_revenue'] += float(booking.total_amount)
-    
-    # Convert to sorted list
+        start_date = booking.check_in_date
+        end_date = booking.check_out_date
+
+        current_date = start_date
+        while current_date <= end_date:
+            date_key = current_date.strftime('%Y-%m-%d')
+
+            if date_key not in grouped_data:
+                grouped_data[date_key] = {
+                    'date': date_key,
+
+                    'bookings': []
+                }
+
+            serializer = BookingSerializer(booking)
+            serialized_data = serializer.data
+
+            if serialized_data not in grouped_data[date_key]['bookings']:
+                grouped_data[date_key]['bookings'].append(serialized_data)
+
+            current_date += timedelta(days=1)
+
     result = sorted(grouped_data.values(), key=lambda x: x['date'])
-    
+
+    grouped = OrderedDict()
+
+    for item in result:
+        date = item.get("date")
+        bookings = item.get("bookings", [])
+
+        if date not in grouped:
+            grouped[date] = []
+
+        grouped[date].extend(bookings)  # append bookings if same date appears again
+
+    result = [{'date': date, 'bookings': bookings} for date, bookings in grouped.items()]
+
     # Calculate pagination
     total_dates = len(result)
     start_idx = (page - 1) * page_size

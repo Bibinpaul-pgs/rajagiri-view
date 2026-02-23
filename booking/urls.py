@@ -3,7 +3,7 @@ from .views import booking_list, booking_retrieve, booking_create, booking_updat
 
 urlpatterns = [
     path('list/', booking_list, name='booking_list'),
-    path('grouped-by-date/', booking_grouped_by_date, name='booking_grouped_by_date'),
+    path('booking-calendar/', booking_grouped_by_date, name='booking_grouped_by_date'),
     path('analytics/', booking_analytics, name='booking_analytics'),
     path('<int:booking_id>/', booking_retrieve, name='booking_retrieve'),
     path('create/', booking_create, name='booking_create'),
