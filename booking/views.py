@@ -122,9 +122,40 @@ def booking_create(request):
     auth_header = request.META.get('HTTP_AUTHORIZATION')
     if not auth_header:
         return Response({'error': 'Authentication credentials were not provided'}, status=status.HTTP_401_UNAUTHORIZED)
-    
-    serializer = BookingSerializer(data=request.data)
+    data = deepcopy(request.data)
+    serializer = BookingSerializer(data=data)
+    print(f"Received booking creation request with data: {data}")
     if serializer.is_valid():
+        check_in_date = serializer.validated_data.get('check_in_date')
+        check_out_date = serializer.validated_data.get('check_out_date')
+        room = data.get('room_id')
+        if check_in_date and room:
+            # Check if any active guest is still checked in and overlaps with the requested dates
+            overlapping_active = Booking.objects.filter(
+                room=room,
+                booking_status='checked_in',
+                check_in_date__lt=check_out_date,
+                check_out_date__gt=check_in_date,
+            )
+            if overlapping_active.exists():
+                active = overlapping_active.first()
+                return Response(
+                    {'error': f'Room {room} currently has a guest checked in (Booking #{active.id}, check-out: {active.check_out_date}). Cannot create a new booking until the current guest checks out.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            bookings_on_date = Booking.objects.filter(check_in_date=check_in_date, room=data.get('room_id')).count()
+            bookings_on_date_guest = Booking.objects.filter(check_in_date=check_in_date, room=data.get('room_id'), guest_email=data.get('guest_email')).count()
+            if bookings_on_date >= 2:
+                return Response(
+                    {'error': f'Maximum of 2 bookings allowed per room per day. Room {room} on {check_in_date} already has {bookings_on_date} booking(s).'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            elif bookings_on_date_guest == 1:
+                return Response(
+                    {'error': f'Guest {data.get("guest_email")} already has a booking for room {room} on {check_in_date}.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -151,8 +182,14 @@ def booking_update(request, booking_id):
     
     serializer = BookingSerializer(booking, data=request.data, partial=True)
     if serializer.is_valid():
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        instance = serializer.save()
+        # Recalculate pending_amount based on discount
+        total = float(instance.total_amount or 0)
+        discount = float(instance.discount_amount or 0)
+        advance = float(instance.advance_amount or 0)
+        instance.pending_amount = round(max(total - discount - advance, 0), 2)
+        instance.save(update_fields=['pending_amount'])
+        return Response(BookingSerializer(instance).data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 

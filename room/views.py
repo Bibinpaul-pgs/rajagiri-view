@@ -5,8 +5,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiRequest, OpenApiTypes
 from drf_spectacular.types import OpenApiTypes
-from .models import Room
-from .serializers import RoomSerializer
+from .models import Room, RoomPricing
+from .serializers import RoomSerializer, RoomPricingSerializer
 
 
 @extend_schema(
@@ -117,7 +117,7 @@ def room_list(request):
         if page > total_pages and total_rooms > 0:
             return Response({'error': f'Page {page} not found. Total pages: {total_pages}'}, status=status.HTTP_404_NOT_FOUND)
         
-        serializer = RoomSerializer(paginated_rooms, many=True)
+        serializer = RoomSerializer(paginated_rooms, many=True, context={'request': request})
         return Response({
             'message': 'Rooms retrieved successfully',
             'pagination': {
@@ -166,7 +166,7 @@ def room_retrieve(request, room_id):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        serializer = RoomSerializer(room)
+        serializer = RoomSerializer(room, context={'request': request})
         return Response({
             'message': 'Room retrieved successfully',
             'room': serializer.data
@@ -206,7 +206,7 @@ def room_create(request):
             room = serializer.save()
             return Response({
                 'message': 'Room created successfully',
-                'room': RoomSerializer(room).data
+                'room': RoomSerializer(room, context={'request': request}).data
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -253,7 +253,7 @@ def room_update(request, room_id):
             room = serializer.save()
             return Response({
                 'message': 'Room updated successfully',
-                'room': RoomSerializer(room).data
+                'room': RoomSerializer(room, context={'request': request}).data
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -297,3 +297,106 @@ def room_delete(request, room_id):
         return Response({
             'message': f'Room {room_number} deleted successfully'
         }, status=status.HTTP_204_NO_CONTENT)
+
+
+@extend_schema(
+    summary="List custom pricing for a room",
+    description="Retrieve all custom price entries for a specific room. Requires valid JWT token.",
+    responses={200: RoomPricingSerializer(many=True), 401: {'error': 'Authentication credentials were not provided'}, 404: {'error': 'Room not found'}},
+    tags=['Room Pricing'],
+)
+@permission_classes([IsAuthenticated])
+@api_view(['GET'])
+def room_pricing_list(request, room_id):
+    """List all custom pricing entries for a room"""
+    auth_header = request.META.get('HTTP_AUTHORIZATION', None)
+    if not auth_header:
+        return Response({'error': 'Authentication credentials were not provided'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        room = Room.objects.get(id=room_id)
+    except Room.DoesNotExist:
+        return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    pricing = RoomPricing.objects.filter(room=room)
+    serializer = RoomPricingSerializer(pricing, many=True)
+    return Response({'room_id': room_id, 'pricing': serializer.data}, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    summary="Create custom pricing for a room",
+    description="Set a custom price for a room over a specific date range. Requires valid JWT token.",
+    request=RoomPricingSerializer,
+    responses={201: RoomPricingSerializer, 400: {'error': 'Bad request'}, 401: {'error': 'Authentication credentials were not provided'}, 404: {'error': 'Room not found'}},
+    tags=['Room Pricing'],
+)
+@permission_classes([IsAuthenticated])
+@api_view(['POST'])
+def room_pricing_create(request, room_id):
+    """Create a custom price entry for a room"""
+    auth_header = request.META.get('HTTP_AUTHORIZATION', None)
+    if not auth_header:
+        return Response({'error': 'Authentication credentials were not provided'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        room = Room.objects.get(id=room_id)
+    except Room.DoesNotExist:
+        return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    data = request.data.copy()
+    data['room'] = room.id
+    serializer = RoomPricingSerializer(data=data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@extend_schema(
+    summary="Update custom pricing entry",
+    description="Update an existing custom price entry by its ID. Requires valid JWT token.",
+    request=RoomPricingSerializer,
+    responses={200: RoomPricingSerializer, 400: {'error': 'Bad request'}, 401: {'error': 'Authentication credentials were not provided'}, 404: {'error': 'Pricing entry not found'}},
+    tags=['Room Pricing'],
+)
+@permission_classes([IsAuthenticated])
+@api_view(['PUT', 'PATCH'])
+def room_pricing_update(request, room_id, pricing_id):
+    """Update a custom price entry"""
+    auth_header = request.META.get('HTTP_AUTHORIZATION', None)
+    if not auth_header:
+        return Response({'error': 'Authentication credentials were not provided'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        pricing = RoomPricing.objects.get(id=pricing_id, room_id=room_id)
+    except RoomPricing.DoesNotExist:
+        return Response({'error': 'Pricing entry not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = RoomPricingSerializer(pricing, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@extend_schema(
+    summary="Delete custom pricing entry",
+    description="Delete an existing custom price entry by its ID. Requires valid JWT token.",
+    responses={204: None, 401: {'error': 'Authentication credentials were not provided'}, 404: {'error': 'Pricing entry not found'}},
+    tags=['Room Pricing'],
+)
+@permission_classes([IsAuthenticated])
+@api_view(['DELETE'])
+def room_pricing_delete(request, room_id, pricing_id):
+    """Delete a custom price entry"""
+    auth_header = request.META.get('HTTP_AUTHORIZATION', None)
+    if not auth_header:
+        return Response({'error': 'Authentication credentials were not provided'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        pricing = RoomPricing.objects.get(id=pricing_id, room_id=room_id)
+    except RoomPricing.DoesNotExist:
+        return Response({'error': 'Pricing entry not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    pricing.delete()
+    return Response({'message': 'Pricing entry deleted successfully'}, status=status.HTTP_204_NO_CONTENT)

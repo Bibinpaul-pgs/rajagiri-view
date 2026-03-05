@@ -9,6 +9,7 @@ class BookingSerializer(serializers.ModelSerializer):
     room = RoomSerializer(read_only=True)
     room_id = serializers.IntegerField(write_only=True)
     nights = serializers.SerializerMethodField()
+    balance_due = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -32,19 +33,22 @@ class BookingSerializer(serializers.ModelSerializer):
             'booking_platform',
             'booking_status',
             'total_amount',
+            'discount_amount',
+            'discount_reason',
             'advance_amount',
             'pending_amount',
+            'balance_due',
             'created_at',
             'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
         extra_kwargs = {
-            'guest_name': {'help_text': 'Guest name'},
-            'guest_phone_number': {'help_text': 'Guest phone number'},
-            'guest_email': {'help_text': 'Guest email address'},
-            'guest_address': {'help_text': 'Guest address'},
-            'guest_id_proof_type': {'help_text': 'Type of ID proof (Passport, Aadhar, PAN, etc.)'},
-            'guest_id_proof_number': {'help_text': 'ID proof number'},
+            'guest_name': {'help_text': 'Guest name', 'required': False, 'allow_null': True, 'allow_blank': True},
+            'guest_phone_number': {'help_text': 'Guest phone number', 'required': False, 'allow_null': True, 'allow_blank': True},
+            'guest_email': {'help_text': 'Guest email address', 'required': False, 'allow_null': True, 'allow_blank': True},
+            'guest_address': {'help_text': 'Guest address', 'required': False, 'allow_null': True, 'allow_blank': True},
+            'guest_id_proof_type': {'help_text': 'Type of ID proof (Passport, Aadhar, PAN, etc.)', 'required': False, 'allow_null': True, 'allow_blank': True},
+            'guest_id_proof_number': {'help_text': 'ID proof number', 'required': False, 'allow_null': True, 'allow_blank': True},
             'check_in_date': {'help_text': 'Check-in date (YYYY-MM-DD)'},
             'check_in_time': {'help_text': 'Check-in time (HH:MM:SS)'},
             'check_out_date': {'help_text': 'Check-out date (YYYY-MM-DD)'},
@@ -82,3 +86,11 @@ class BookingSerializer(serializers.ModelSerializer):
         if obj.check_in_date and obj.check_out_date:
             return (obj.check_out_date - obj.check_in_date).days
         return 0
+
+    @extend_schema_field(serializers.FloatField())
+    def get_balance_due(self, obj) -> float:
+        """Calculate balance due: total_amount - discount_amount - advance_amount"""
+        total = float(obj.total_amount or 0)
+        discount = float(obj.discount_amount or 0)
+        advance = float(obj.advance_amount or 0)
+        return round(max(total - discount - advance, 0), 2)
